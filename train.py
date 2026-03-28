@@ -322,7 +322,7 @@ def _worker_bootstrap_episode(game_idx):
     game_examples = []
     
     # 0.1s is enough for depth-4 search which is plenty for decent bootstrapping
-    while not state.game_over and len(game_examples) < 200:
+    while not state.game_over and len(game_examples) < 100:
          moves = h_ai[state.current_player].choose_move(state, time_limit=0.1)
          
          # Create a target policy from heuristic move
