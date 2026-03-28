@@ -44,46 +44,56 @@ class HeXOGUIBenchmark:
         pygame.display.set_caption("HeXO - Trained vs Random Benchmark")
         self.camera_x = SCREEN_WIDTH // 2
         self.camera_y = SCREEN_HEIGHT // 2
+        self.zoom_scale = 1.0
+        
         self.font = pygame.font.SysFont("Arial", 28)
         self.small_font = pygame.font.SysFont("Arial", 20)
         
         self.trained_ai_id = 1
         self.random_ai_id = 2
         
-        self.ais = {
-            self.trained_ai_id: HeXOBestAI(self.trained_ai_id),
-            self.random_ai_id: RandomAI(self.random_ai_id)
-        }
+        self.best_ai = HeXOBestAI(1) # Internal model reference
+        self.random_ai = RandomAI(2)
         
-        self.scores = {self.trained_ai_id: 0, self.random_ai_id: 0}
+        self.scores = {1: 0, 2: 0} # Using internal IDs (1 for Trained, 2 for Random)
         self.games_played = 0
         self.reset_game()
 
     def reset_game(self):
         self.engine = HeXOEngine()
         self.games_played += 1
-        # Alternate who goes first
-        if self.games_played % 2 == 0:
-            self.trained_ai_id = 2
-            self.random_ai_id = 1
+        
+        # Alternate who goes first in the engine
+        # In engine, player 1 always goes first.
+        # We assign our AI objects to those player ids.
+        if self.games_played % 2 != 0:
+            # Game 1, 3, 5... Trained is P1, Random is P2
+            self.p1_is_trained = True
+            self.ais = {1: self.best_ai, 2: self.random_ai}
+            self.best_ai.player_id = 1
+            self.random_ai.player_id = 2
         else:
-            self.trained_ai_id = 1
-            self.random_ai_id = 2
+            # Game 2, 4, 6... Random is P1, Trained is P2
+            self.p1_is_trained = False
+            self.ais = {1: self.random_ai, 2: self.best_ai}
+            self.random_ai.player_id = 1
+            self.best_ai.player_id = 2
             
-        self.ais[self.trained_ai_id].player_id = self.trained_ai_id
-        self.ais[self.random_ai_id].player_id = self.random_ai_id
         self.game_over_timer = 0
 
     def draw_hex(self, h: Hex, color, width=0):
-        px, py = hex_to_pixel(h, HEX_RADIUS)
+        # Apply zoom to the base radius
+        dynamic_radius = HEX_RADIUS * self.zoom_scale
+        
+        px, py = hex_to_pixel(h, dynamic_radius)
         px += self.camera_x
         py += self.camera_y
         points = []
         for i in range(6):
             angle_deg = 60 * i
             angle_rad = math.pi / 180 * angle_deg
-            points.append((px + HEX_RADIUS * math.cos(angle_rad),
-                           py + HEX_RADIUS * math.sin(angle_rad)))
+            points.append((px + dynamic_radius * math.cos(angle_rad),
+                           py + dynamic_radius * math.sin(angle_rad)))
         pygame.draw.polygon(self.screen, color, points, width)
 
     def run(self):
@@ -93,10 +103,31 @@ class HeXOGUIBenchmark:
         while running:
             self.screen.fill(BG_COLOR)
             
-            # Events
+            # Key Handling (Continuous for smooth panning)
+            keys = pygame.key.get_pressed()
+            move_speed = 10
+            if keys[pygame.K_LEFT]:  self.camera_x += move_speed
+            if keys[pygame.K_RIGHT]: self.camera_x -= move_speed
+            if keys[pygame.K_UP]:    self.camera_y += move_speed
+            if keys[pygame.K_DOWN]:  self.camera_y -= move_speed
+            
+            # Zoom keys
+            if keys[pygame.K_EQUALS] or keys[pygame.K_KP_PLUS]:
+                 self.zoom_scale *= 1.05
+            if keys[pygame.K_MINUS] or keys[pygame.K_KP_MINUS]:
+                 self.zoom_scale *= 0.95
+
+            # Event Handling
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                
+                if event.type == pygame.MOUSEWHEEL:
+                    if event.y > 0: # Scroll Up
+                        self.zoom_scale *= 1.1
+                    else: # Scroll Down
+                        self.zoom_scale *= 0.9
+                
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_r:
                         self.reset_game()
@@ -113,11 +144,12 @@ class HeXOGUIBenchmark:
                 # Game is over, wait a bit then reset
                 if self.game_over_timer == 0:
                     winner = self.engine.winner
-                    # Identify if the winner was trained or random
-                    if winner == self.trained_ai_id:
-                        self.scores[self.trained_ai_id] += 1
+                    # Was the winner of this game the trained one?
+                    winner_is_trained = (self.p1_is_trained and winner == 1) or (not self.p1_is_trained and winner == 2)
+                    if winner_is_trained:
+                        self.scores[1] += 1
                     else:
-                        self.scores[self.random_ai_id] += 1
+                        self.scores[2] += 1
                     self.game_over_timer = time.time()
                 
                 if time.time() - self.game_over_timer > 2: # 2 second pause
@@ -134,15 +166,19 @@ class HeXOGUIBenchmark:
                 self.draw_hex(h, color)
                 self.draw_hex(h, BORDER_COLOR, 3)
 
-            # Stats overlay
-            t_win_rate = (self.scores[self.trained_ai_id] / self.games_played * 100) if self.games_played > 0 else 0
+            # Overlay Background
+            pygame.draw.rect(self.screen, (20, 20, 25, 150), (10, 10, 480, 310))
             
-            p1_label = "TRAINED (Neural)" if self.trained_ai_id == 1 else "RANDOM (Bot)"
-            p2_label = "TRAINED (Neural)" if self.trained_ai_id == 2 else "RANDOM (Bot)"
+            # Stats calculation
+            t_win_rate = (self.scores[1] / self.games_played * 100) if self.games_played > 0 else 0
+            
+            p1_label = "TRAINED (Neural)" if self.p1_is_trained else "RANDOM (Bot)"
+            p2_label = "RANDOM (Bot)" if self.p1_is_trained else "TRAINED (Neural)"
             
             status = f"Game #{self.games_played} | Player {self.engine.current_player}'s Turn"
             if self.engine.game_over:
-                winner_name = "TRAINED" if self.engine.winner == self.trained_ai_id else "RANDOM"
+                winner_is_trained = (self.p1_is_trained and self.engine.winner == 1) or (not self.p1_is_trained and self.engine.winner == 2)
+                winner_name = "TRAINED" if winner_is_trained else "RANDOM"
                 status = f"GAME OVER - {winner_name} WINS!"
 
             lines = [
@@ -151,9 +187,10 @@ class HeXOGUIBenchmark:
                 f"P2 (Blue): {p2_label}",
                 "",
                 f"SCOREBOARD (Total Games: {self.games_played})",
-                f"Trained Wins: {self.scores[self.trained_ai_id]}",
-                f"Random Wins:  {self.scores[self.random_ai_id]}",
-                f"Trained Win Rate: {t_win_rate:.1f}%"
+                f"Trained Wins: {self.scores[1]}",
+                f"Random Wins:  {self.scores[2]}",
+                f"Trained Win Rate: {t_win_rate:.1f}%",
+                "Controls: Arrows to Pan | Wheel or +/- to Zoom"
             ]
             
             for i, line in enumerate(lines):
@@ -165,6 +202,8 @@ class HeXOGUIBenchmark:
 
             pygame.display.flip()
             clock.tick(60)
+
+        pygame.quit()
 
         pygame.quit()
 
