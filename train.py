@@ -287,8 +287,9 @@ def train_network():
     print()
     
     from tqdm import tqdm
-    import concurrent.futures
+    from multiprocessing import Manager
     import multiprocessing
+    import concurrent.futures
     
     # We use 'spawn' or 'fork' based on OS, but for CUDA must use 'spawn'
     try:
