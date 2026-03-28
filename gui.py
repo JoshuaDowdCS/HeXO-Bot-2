@@ -3,6 +3,7 @@ import math
 import sys
 from hexo_engine import HeXOEngine, Hex
 from best_ai import HeXOBestAI
+from train import BOARD_SIZE
 
 # UI Constants
 SCREEN_WIDTH = 1200
@@ -86,7 +87,7 @@ class HeXOGUI:
                     if event.key == pygame.K_2:
                         self.ai_active[2] = not self.ai_active[2]
                     if event.key == pygame.K_r:
-                        self.engine = HeXOEngine() # Reset
+                        self.engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2) # Reset
 
                 if event.type == pygame.MOUSEBUTTONDOWN and not self.engine.game_over:
                     if not self.ai_active.get(self.engine.current_player):
@@ -143,6 +144,6 @@ class HeXOGUI:
         pygame.quit()
 
 if __name__ == "__main__":
-    engine = HeXOEngine()
+    engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
     gui = HeXOGUI(engine)
     gui.run()

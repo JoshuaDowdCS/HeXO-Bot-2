@@ -30,7 +30,7 @@ class HeXOBestAI:
         moves_needed = engine.get_moves_allowed() - engine.moves_made_this_turn
         moves = []
         
-        sim_engine = copy.deepcopy(engine)
+        sim_engine = engine.clone()
         
         for _ in range(moves_needed):
             if self.use_neural:

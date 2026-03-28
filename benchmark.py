@@ -3,6 +3,7 @@ import random
 from hexo_engine import HeXOEngine, Hex
 from best_ai import HeXOBestAI
 from ai import HeXOAI
+from train import BOARD_SIZE
 
 class RandomAI:
     def __init__(self, player_id):
@@ -27,7 +28,7 @@ class RandomAI:
         return moves
 
 def play_game(player1, player2, verbose=False):
-    engine = HeXOEngine()
+    engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
     
     while not engine.game_over:
         current_ai = player1 if engine.current_player == 1 else player2

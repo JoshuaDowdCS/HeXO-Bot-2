@@ -5,6 +5,7 @@ import random
 import time
 from hexo_engine import HeXOEngine, Hex
 from best_ai import HeXOBestAI
+from train import BOARD_SIZE
 
 # UI Constants
 SCREEN_WIDTH = 1200
@@ -60,7 +61,7 @@ class HeXOGUIBenchmark:
         self.reset_game()
 
     def reset_game(self):
-        self.engine = HeXOEngine()
+        self.engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
         self.games_played += 1
         
         # Alternate who goes first in the engine
