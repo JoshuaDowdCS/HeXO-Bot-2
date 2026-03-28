@@ -319,7 +319,9 @@ def train_network():
         with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
             futures = [executor.submit(worker_execute_episode, "temp_model_sync.pth", shared_moves, shared_games) for _ in range(GAMES)]
             
-            while results_count := sum(1 for f in futures if f.done()):
+            while True:
+                results_count = sum(1 for f in futures if f.done())
+                
                 # Update UI postfix with global stats
                 elapsed = time.time() - start_t
                 total_moves = shared_moves.value
