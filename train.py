@@ -208,6 +208,13 @@ def execute_episode(model):
                 z = 1 if e[1] == state.winner else -1
                 r.append((e[0], e[2], z))
             return r, len(train_examples)
+            
+        if len(train_examples) >= 150:
+            # Prevent infinite random-walk games without a winner during early untrained epochs
+            r = []
+            for e in train_examples:
+                r.append((e[0], e[2], 0))  # Draw = 0 reward
+            return r, len(train_examples)
 
 def train_network():
     print(f"HeXO Training — Device: {device}")
