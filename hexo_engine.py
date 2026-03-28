@@ -35,6 +35,19 @@ class HeXOEngine:
         # Cache of hexes reachable from current board state
         # Rule: Only update between players
         self.cached_reachable_hexes: Set[Hex] = set()
+        self.pending_cache_updates: List[Hex] = []
+
+    def clone(self) -> 'HeXOEngine':
+        new_engine = HeXOEngine()
+        new_engine.board = self.board.copy()
+        new_engine.turn_number = self.turn_number
+        new_engine.current_player = self.current_player
+        new_engine.moves_made_this_turn = self.moves_made_this_turn
+        new_engine.game_over = self.game_over
+        new_engine.winner = self.winner
+        new_engine.cached_reachable_hexes = self.cached_reachable_hexes.copy()
+        new_engine.pending_cache_updates = self.pending_cache_updates.copy()
+        return new_engine
 
     def get_moves_allowed(self) -> int:
         if self.turn_number == 1:
@@ -60,6 +73,7 @@ class HeXOEngine:
 
         self.board[hex_coord] = self.current_player
         self.moves_made_this_turn += 1
+        self.pending_cache_updates.append(hex_coord)
         
         # Check for win condition
         if self._check_win(hex_coord):
@@ -80,23 +94,18 @@ class HeXOEngine:
         self._update_reachable_cache()
 
     def _update_reachable_cache(self):
-        """Updates the set of hexes within 8 spaces of any occupied hex."""
-        if not self.board:
-            # If no stones, allow starting anywhere? Usually (0,0) is best.
+        """Updates the set of hexes within 8 spaces of any occupied hex incrementally."""
+        if not self.board and not self.pending_cache_updates:
             self.cached_reachable_hexes = {Hex(0, 0)}
             return
 
-        new_cache = set()
-        # For simplicity, we could find all hexes with distance <= 8 of any board stone.
-        # This could be expensive. Optimization likely needed.
-        for stone_hex in self.board:
-            # All hexes within distance 8 of stone_hex
+        for stone_hex in self.pending_cache_updates:
             for q in range(-8, 9):
                 for r in range(max(-8, -q - 8), min(8, -q + 8) + 1):
                     target = Hex(stone_hex.q + q, stone_hex.r + r)
-                    if target not in self.board:
-                        new_cache.add(target)
-        self.cached_reachable_hexes = new_cache
+                    self.cached_reachable_hexes.add(target)
+                    
+        self.pending_cache_updates.clear()
 
     def _check_win(self, last_hex: Hex) -> bool:
         directions = [(1, 0), (1, -1), (0, -1)]  # q, r

@@ -69,7 +69,7 @@ class NeuralMCTS:
     def getActionProb(self, state: HeXOEngine, temp=1):
         # We need a string representation of the state
         # In HeXO, stones and current player define the state
-        s = str(sorted(state.board.items(), key=lambda x: (x[0].q, x[0].r))) + str(state.current_player)
+        s = hash((frozenset(state.board.items()), state.current_player))
         
         for _ in range(SIMULATIONS):
              self.search(state)
@@ -93,8 +93,7 @@ class NeuralMCTS:
         return probs, legal_moves
 
     def search(self, state: HeXOEngine):
-        import copy
-        s = str(sorted(state.board.items(), key=lambda x: (x[0].q, x[0].r))) + str(state.current_player)
+        s = hash((frozenset(state.board.items()), state.current_player))
         
         if s not in self.Es:
             self.Es[s] = self._check_terminal(state)
@@ -151,7 +150,7 @@ class NeuralMCTS:
                 
         if best_act is None: best_act = random.choice(legal_moves)
 
-        next_s = copy.deepcopy(state)
+        next_s = state.clone()
         success = next_s.place_stone(best_act)
         if not success:
              # Safety fallback: Illegal moves should be drastically penalized during MCTS loop
