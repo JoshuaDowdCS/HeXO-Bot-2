@@ -199,27 +199,52 @@ def execute_episode(model):
         action = moves[idx]
         state.place_stone(action)
         
+        move_count = 0
+        
         if state.game_over:
             # Reconstruct targets corresponding to final game outcome
             r = []
             for e in train_examples:
                 z = 1 if e[1] == state.winner else -1
                 r.append((e[0], e[2], z))
-            return r
+            return r, len(train_examples)
 
 def train_network():
-    print(f"Initializing Neural Network on device: {device}")
+    print(f"HeXO Training — Device: {device}")
+    print(f"Config: {GAMES} games × {SIMULATIONS} sims, batch={BATCH_SIZE}")
+    print()
+    
     model = HeXONet(board_size=BOARD_SIZE).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
     
+    print("-" * 50)
+    print("MODEL DIAGNOSTICS:")
+    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Board Tensors: {BOARD_SIZE}x{BOARD_SIZE}")
+    print(f"Hidden Dimensions: 128")
+    print(f"Number of CNN Layers: 3")
+    print(f"Total Parameters: {total_params:,}")
+    print(f"Model Device Placement: {device}")
+    print("-" * 50)
+    print()
+    
+    from tqdm import tqdm
     for epoch in range(EPOCHS):
-        print(f"--- Epoch {epoch+1}/{EPOCHS} ---")
+        print(f"── Epoch {epoch+1}/{EPOCHS} ──")
         model.eval()
         train_data = []
+        
+        pbar = tqdm(total=GAMES, desc="    Self-play", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} games [{elapsed}<{remaining}] {postfix}")
         for i in range(GAMES):
-            print(f"Self-play Game {i+1}/{GAMES}...")
-            train_data += execute_episode(model)
+            start_t = time.time()
+            data, moves = execute_episode(model)
+            elapsed = time.time() - start_t
+            sps = (moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
+            train_data += data
+            pbar.set_postfix_str(f", moves={moves} sps={sps:.1f}")
+            pbar.update(1)
+        pbar.close()
             
         dataset = HeXODataset(train_data)
         dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
