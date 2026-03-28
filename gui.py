@@ -2,7 +2,7 @@ import pygame
 import math
 import sys
 from hexo_engine import HeXOEngine, Hex
-from ai import HeXOAI
+from best_ai import HeXOBestAI
 
 # UI Constants
 SCREEN_WIDTH = 1200
@@ -13,6 +13,7 @@ HEX_COLOR = (60, 60, 65)
 P1_COLOR = (255, 100, 100)
 P2_COLOR = (100, 200, 255)
 HIGHLIGHT_COLOR = (200, 200, 200)
+BORDER_COLOR = (20, 20, 25)
 
 def hex_to_pixel(h: Hex, size: float) -> tuple[float, float]:
     x = size * (3/2 * h.q)
@@ -43,7 +44,7 @@ class HeXOGUI:
         self.camera_x = SCREEN_WIDTH // 2
         self.camera_y = SCREEN_HEIGHT // 2
         self.font = pygame.font.SysFont("Arial", 24)
-        self.ais = {1: HeXOAI(1), 2: HeXOAI(2)}
+        self.ais = {1: HeXOBestAI(1), 2: HeXOBestAI(2)}
         self.ai_active = {1: False, 2: True} # P2 is AI by default
 
     def draw_hex(self, h: Hex, color, width=0):
@@ -103,6 +104,7 @@ class HeXOGUI:
             for h, p in self.engine.board.items():
                 color = P1_COLOR if p == 1 else P2_COLOR
                 self.draw_hex(h, color)
+                self.draw_hex(h, BORDER_COLOR, 3)
                 
             # Draw mouse hover
             if not self.ai_active.get(self.engine.current_player):
@@ -112,8 +114,11 @@ class HeXOGUI:
                     self.draw_hex(hx, HIGHLIGHT_COLOR, 2)
 
             # Info text
-            p1_status = "[AI]" if self.ai_active[1] else "[Human]"
-            p2_status = "[AI]" if self.ai_active[2] else "[Human]"
+            p1_bot_type = "Model" if getattr(self.ais[1], 'use_neural', False) else "Random"
+            p2_bot_type = "Model" if getattr(self.ais[2], 'use_neural', False) else "Random"
+            
+            p1_status = f"[AI - {p1_bot_type}]" if self.ai_active[1] else "[Human]"
+            p2_status = f"[AI - {p2_bot_type}]" if self.ai_active[2] else "[Human]"
             
             status = f"Player {self.engine.current_player}'s Turn"
             if self.engine.game_over:
