@@ -10,17 +10,13 @@ import time
 import math
 import numpy as np
 
-# Training Constants optimized for Ada GPUs
-BATCH_SIZE = 128
-EPOCHS = 10
-BOARD_SIZE = 21 # Accommodates max radius of ~8+ across all directions
-SIMULATIONS = 50 # MCTS simulations per turn
-GAMES = 20 # Self-play games per epoch
-
-device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
-if device.type == 'cuda':
-    torch.backends.cudnn.benchmark = True # Optimized for RTX Ada
-    torch.set_float32_matmul_precision('high') # TF32 optimization for RTX Ada
+# Training Constants optimized for high-end Dell Precision (i7-13800H + RTX Ada)
+BATCH_SIZE = 256  # Larger batch for better GPU utilization
+EPOCHS = 20       # More epochs for better convergence
+BOARD_SIZE = 21   
+SIMULATIONS = 160 # Deeper MCTS for higher quality data
+GAMES = 60        # More games per epoch
+NUM_WORKERS = 8   # Parallel self-play processes (utilize those 20 threads!)
 
 def encode_board(engine: HeXOEngine, player_id: int):
     # Center (0,0) mapped to (10, 10). Wait, q and r can range more if stones expand 
@@ -177,6 +173,48 @@ class NeuralMCTS:
             return -1
         return 0
 
+def worker_execute_episode(weights_path):
+    # Re-initialize for worker subprocess
+    worker_device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
+    worker_model = HeXONet(board_size=BOARD_SIZE).to(worker_device)
+    worker_model.load_state_dict(torch.load(weights_path, map_location=worker_device))
+    worker_model.eval()
+    
+    train_examples = []
+    state = HeXOEngine()
+    state.place_stone(Hex(0, 0)) # First move forced
+    mcts = NeuralMCTS(worker_model)
+    
+    while True:
+        # We don't need UI progress bars in individual workers
+        temp = int(state.turn_number < 15)
+        pi, moves = mcts.getActionProb(state, temp=temp)
+        
+        pi_target = np.zeros(BOARD_SIZE * BOARD_SIZE)
+        for p, m in zip(pi, moves):
+            idx = (m.q + BOARD_SIZE // 2) * BOARD_SIZE + (m.r + BOARD_SIZE // 2)
+            if 0 <= idx < BOARD_SIZE * BOARD_SIZE:
+                pi_target[idx] = p
+                
+        train_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
+        
+        idx = np.random.choice(len(moves), p=pi)
+        action = moves[idx]
+        state.place_stone(action)
+        
+        if state.game_over:
+            r = []
+            for e in train_examples:
+                z = 1 if e[1] == state.winner else -1
+                r.append((e[0], e[2], z))
+            return r, len(train_examples)
+            
+        if len(train_examples) >= 200: # Limit early games
+            r = []
+            for e in train_examples:
+                r.append((e[0], e[2], 0))
+            return r, len(train_examples)
+
 def execute_episode(model, pbar, start_t):
     train_examples = []
     state = HeXOEngine()
@@ -244,18 +282,47 @@ def train_network():
     print()
     
     from tqdm import tqdm
+    import concurrent.futures
+    import multiprocessing
+    
+    # We use 'spawn' or 'fork' based on OS, but for CUDA must use 'spawn'
+    try:
+        multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        pass
+
     for epoch in range(EPOCHS):
         print(f"── Epoch {epoch+1}/{EPOCHS} ──")
         model.eval()
         train_data = []
         
-        pbar = tqdm(total=GAMES, desc="    Self-play", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} games [{elapsed}<{remaining}] {postfix}")
-        for i in range(GAMES):
-            start_t = time.time()
-            data, moves = execute_episode(model, pbar, start_t)
-            train_data += data
-            pbar.update(1)
-        pbar.close()
+        print(f"    Generating {GAMES} games across {NUM_WORKERS} workers...")
+        
+        # Parallel game generation
+        with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+            # We must pass a path or a state_dict to reconstruct the model in each process
+            # since a full torch Model can't always be pickled across processes cleanly with CUDA.
+            # However, for simplicity here we pass the current model if it works, 
+            # or just load it inside each process. 
+            # A more robust way is to save a temp weight file.
+            torch.save(model.state_dict(), "temp_model_sync.pth")
+            
+            futures = []
+            results_count = 0
+            pbar = tqdm(total=GAMES, desc="    Total Progress")
+            
+            # Start games
+            for _ in range(GAMES):
+                futures.append(executor.submit(worker_execute_episode, "temp_model_sync.pth"))
+            
+            for future in concurrent.futures.as_completed(futures):
+                data, moves = future.result()
+                train_data += data
+                results_count += 1
+                pbar.update(1)
+            pbar.close()
+
+        print(f"    Self-play complete. Generated {len(train_data)} training examples.")
             
         dataset = HeXODataset(train_data)
         dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
