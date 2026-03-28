@@ -23,32 +23,39 @@ if device.type == 'cuda':
     torch.backends.cudnn.benchmark = True 
     torch.set_float32_matmul_precision('high') 
 
+def get_board_centroid(engine: HeXOEngine):
+    if not engine.board:
+         return 0, 0
+    qs = [h.q for h in engine.board]
+    rs = [h.r for h in engine.board]
+    return int(round(np.mean(qs))), int(round(np.mean(rs)))
+
 def encode_board(engine: HeXOEngine, player_id: int):
-    # Center (0,0) mapped to (10, 10). Wait, q and r can range more if stones expand 
-    # but the max distance is tightly controlled by the engine if the board starts at 0,0.
-    # We will compute dynamic bounding box, but for fully fixed tensor we pad to 21x21.
+    # Centroid-based sliding window: map board center to (10, 10)
     matrix = np.zeros((2, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
     center = BOARD_SIZE // 2
+    offset_q, offset_r = get_board_centroid(engine)
+    
     for h, p in engine.board.items():
-        q_idx = h.q + center
-        r_idx = h.r + center
+        q_idx = h.q - offset_q + center
+        r_idx = h.r - offset_r + center
         if 0 <= q_idx < BOARD_SIZE and 0 <= r_idx < BOARD_SIZE:
             layer = 0 if p == player_id else 1
             matrix[layer, q_idx, r_idx] = 1.0
     return matrix
 
-def hex_to_idx(h: Hex):
+def hex_to_idx(h: Hex, offset_q: int, offset_r: int):
     center = BOARD_SIZE // 2
-    q_idx = h.q + center
-    r_idx = h.r + center
+    q_idx = h.q - offset_q + center
+    r_idx = h.r - offset_r + center
     if 0 <= q_idx < BOARD_SIZE and 0 <= r_idx < BOARD_SIZE:
         return q_idx * BOARD_SIZE + r_idx
     return None
 
-def idx_to_hex(idx: int):
+def idx_to_hex(idx: int, offset_q: int, offset_r: int):
     center = BOARD_SIZE // 2
-    q = idx // BOARD_SIZE - center
-    r = idx % BOARD_SIZE - center
+    q = idx // BOARD_SIZE - center + offset_q
+    r = idx % BOARD_SIZE - center + offset_r
     return Hex(q, r)
 
 class HeXODataset(Dataset):
@@ -114,39 +121,48 @@ class NeuralMCTS:
             
             legal_moves = state.get_legal_moves()
             self.Vs[s] = legal_moves
+            offset_q, offset_r = get_board_centroid(state)
             
             # Mask illegal moves
-            legal_idx = [hex_to_idx(m) for m in legal_moves]
             valid_pi = np.zeros(BOARD_SIZE * BOARD_SIZE)
-            for m, idx in zip(legal_moves, legal_idx):
-                if 0 <= idx < BOARD_SIZE * BOARD_SIZE:
+            for m in legal_moves:
+                idx = hex_to_idx(m, offset_q, offset_r)
+                if idx is not None:
                     valid_pi[idx] = pi[idx]
             
             sum_Ps_s = np.sum(valid_pi)
             if sum_Ps_s > 0:
                 valid_pi /= sum_Ps_s
             else:
-                # Fallback purely random
-                for idx in legal_idx:
-                     if 0 <= idx < len(valid_pi): valid_pi[idx] = 1.0 / len(legal_idx)
+                # Fallback: find closest move to center if all out of sight
+                # (Shouldn't happen with 8-hex rule and 21x21 window)
+                for m in legal_moves:
+                    idx = hex_to_idx(m, offset_q, offset_r)
+                    if idx is not None: valid_pi[idx] = 1.0 / len(legal_moves)
             
             self.Ps[s] = valid_pi
             self.Ns[s] = 0
             return -v.item()
 
+        legal_moves = self.Vs[s]
+        offset_q, offset_r = get_board_centroid(state)
+        
         # Ps was stored as valid_pi (array of size 441)
-        # Filter out moves that are out of bounds for the NN
+        # Filter out moves that are out of bounds for the NN's current sliding window
         valid_legal_moves = []
         indices = []
         for a in legal_moves:
-            idx = hex_to_idx(a)
+            idx = hex_to_idx(a, offset_q, offset_r)
             if idx is not None:
                 valid_legal_moves.append(a)
                 indices.append(idx)
         
         if not valid_legal_moves:
-            # If NO moves are in sight, the AI just picks one randomly to proceed
-            return -1  # Or some small penalty for being "off-board"
+            # If NO moves are in sight, pick the one closest to centroid
+            dists = [Hex(a.q - offset_q, a.r - offset_r).distance(Hex(0,0)) for a in legal_moves]
+            best_act = legal_moves[np.argmin(dists)]
+            # We don't search further, just take it
+            return -0.1
             
         ps_vals = self.Ps[s][indices] 
         counts = np.array([self.Nsa.get((s, a), 0) for a in valid_legal_moves])
@@ -199,10 +215,11 @@ def worker_execute_episode(weights_path, shared_moves=None, shared_games=None):
         temp = int(state.turn_number < 15)
         pi, moves = mcts.getActionProb(state, temp=temp)
         
+        offset_q, offset_r = get_board_centroid(state)
         pi_target = np.zeros(BOARD_SIZE * BOARD_SIZE)
         for p, m in zip(pi, moves):
-            idx = (m.q + BOARD_SIZE // 2) * BOARD_SIZE + (m.r + BOARD_SIZE // 2)
-            if 0 <= idx < BOARD_SIZE * BOARD_SIZE:
+            idx = hex_to_idx(m, offset_q, offset_r)
+            if idx is not None:
                 pi_target[idx] = p
                 
         train_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
@@ -241,10 +258,11 @@ def execute_episode(model, pbar, start_t):
         temp = int(state.turn_number < 15)
         pi, moves = mcts.getActionProb(state, temp=temp)
         
+        offset_q, offset_r = get_board_centroid(state)
         pi_target = np.zeros(BOARD_SIZE * BOARD_SIZE)
         for p, m in zip(pi, moves):
-            idx = hex_to_idx(m)
-            if 0 <= idx < BOARD_SIZE * BOARD_SIZE:
+            idx = hex_to_idx(m, offset_q, offset_r)
+            if idx is not None:
                 pi_target[idx] = p
                 
         train_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
