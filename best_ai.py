@@ -5,6 +5,7 @@ import copy
 from hexo_engine import HeXOEngine, Hex
 from model import HeXONet
 from train import NeuralMCTS, device, BOARD_SIZE
+from ai import HeXOAI
 
 class HeXOBestAI:
     def __init__(self, player_id: int, model_path="hexo_model.pth"):
@@ -19,9 +20,13 @@ class HeXOBestAI:
             self.model.eval()
             self.mcts = NeuralMCTS(self.model)
         else:
-            print(f"No model found. Player {player_id} will use Random AI.")
+            print(f"No model found. Player {player_id} will use Heuristic AI fallback.")
+            self.fallback_ai = HeXOAI(player_id)
 
     def choose_move(self, engine: HeXOEngine) -> list[Hex]:
+        if not self.use_neural:
+            return self.fallback_ai.choose_move(engine)
+            
         moves_needed = engine.get_moves_allowed() - engine.moves_made_this_turn
         moves = []
         
@@ -37,11 +42,6 @@ class HeXOBestAI:
                 except ValueError:
                     # Fallback if probability array doesn't have 1.0
                     best_move = random.choice(legal_moves)
-            else:
-                legal = sim_engine.get_legal_moves()
-                if not legal:
-                    break
-                best_move = random.choice(legal)
                 
             moves.append(best_move)
             sim_engine.place_stone(best_move)

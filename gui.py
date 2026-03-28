@@ -114,8 +114,8 @@ class HeXOGUI:
                     self.draw_hex(hx, HIGHLIGHT_COLOR, 2)
 
             # Info text
-            p1_bot_type = "Model" if getattr(self.ais[1], 'use_neural', False) else "Random"
-            p2_bot_type = "Model" if getattr(self.ais[2], 'use_neural', False) else "Random"
+            p1_bot_type = "Model" if getattr(self.ais[1], 'use_neural', False) else "Heuristic"
+            p2_bot_type = "Model" if getattr(self.ais[2], 'use_neural', False) else "Heuristic"
             
             p1_status = f"[AI - {p1_bot_type}]" if self.ai_active[1] else "[Human]"
             p2_status = f"[AI - {p2_bot_type}]" if self.ai_active[2] else "[Human]"
