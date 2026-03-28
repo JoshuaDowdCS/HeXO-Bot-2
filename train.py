@@ -68,9 +68,7 @@ class NeuralMCTS:
         self.Vs = {}
 
     def getActionProb(self, state: HeXOEngine, temp=1):
-        # We need a string representation of the state
-        # In HeXO, stones and current player define the state
-        s = hash((frozenset(state.board.items()), state.current_player))
+        s = state.get_state_key()
         
         for _ in range(SIMULATIONS):
              self.search(state)
@@ -94,7 +92,7 @@ class NeuralMCTS:
         return probs, legal_moves
 
     def search(self, state: HeXOEngine):
-        s = hash((frozenset(state.board.items()), state.current_player))
+        s = state.get_state_key()
         
         if s not in self.Es:
             self.Es[s] = self._check_terminal(state)
@@ -133,23 +131,18 @@ class NeuralMCTS:
             return -v.item()
 
         legal_moves = self.Vs[s]
-        cur_best = -float('inf')
-        best_act = None
         
-        for a in legal_moves:
-            idx = hex_to_idx(a)
-            if idx < 0 or idx >= BOARD_SIZE * BOARD_SIZE: continue
-            
-            if (s, a) in self.Qsa:
-                u = self.Qsa[(s, a)] + self.c_puct * self.Ps[s][idx] * math.sqrt(self.Ns[s]) / (1 + self.Nsa[(s, a)])
-            else:
-                u = self.c_puct * self.Ps[s][idx] * math.sqrt(self.Ns[s] + 1e-8)
-                
-            if u > cur_best:
-                cur_best = u
-                best_act = a
-                
-        if best_act is None: best_act = random.choice(legal_moves)
+        # Optimize Selection loop with NumPy
+        counts = np.array([self.Nsa.get((s, a), 0) for a in legal_moves])
+        q_vals = np.array([self.Qsa.get((s, a), 0) for a in legal_moves])
+        
+        # Ps was stored as valid_pi (array of size 441)
+        indices = [hex_to_idx(a) for a in legal_moves]
+        ps_vals = self.Ps[s][indices] 
+        
+        u = q_vals + self.c_puct * ps_vals * (math.sqrt(self.Ns[s] + 1e-8) / (1 + counts))
+        best_idx = np.argmax(u)
+        best_act = legal_moves[best_idx]
 
         next_s = state.clone()
         success = next_s.place_stone(best_act)
@@ -186,7 +179,7 @@ def worker_execute_episode(weights_path, shared_moves=None, shared_games=None):
     worker_model.eval()
     
     train_examples = []
-    state = HeXOEngine()
+    state = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
     state.place_stone(Hex(0, 0)) # First move forced
     mcts = NeuralMCTS(worker_model)
     
@@ -225,7 +218,7 @@ def worker_execute_episode(weights_path, shared_moves=None, shared_games=None):
 
 def execute_episode(model, pbar, start_t):
     train_examples = []
-    state = HeXOEngine()
+    state = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
     
     # Auto-play the deterministically forced first move to prevent useless 0-state NN evaluations
     state.place_stone(Hex(0, 0))
@@ -306,40 +299,39 @@ def train_network():
         
         print(f"    Generating {GAMES} games across {NUM_WORKERS} workers...")
         
-        from multiprocessing import Manager, Value
-        manager = Manager()
-        shared_moves = manager.Value('i', 0)
-        shared_games = manager.Value('i', 0)
-        
-        torch.save(model.state_dict(), "temp_model_sync.pth")
-        
-        start_t = time.time()
-        pbar = tqdm(total=GAMES, desc="    Total Progress")
-
-        with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
-            futures = [executor.submit(worker_execute_episode, "temp_model_sync.pth", shared_moves, shared_games) for _ in range(GAMES)]
+        with Manager() as manager:
+            shared_moves = manager.Value('i', 0)
+            shared_games = manager.Value('i', 0)
             
-            while True:
-                results_count = sum(1 for f in futures if f.done())
-                
-                # Update UI postfix with global stats
-                elapsed = time.time() - start_t
-                total_moves = shared_moves.value
-                global_sps = (total_moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
-                
-                # Update bar only as new games finish or during gaps
-                pbar.n = results_count
-                pbar.set_postfix_str(f"total_moves={total_moves} global_sps={global_sps:.1f}")
-                pbar.refresh()
-                
-                if results_count == GAMES:
-                    break
-                time.sleep(1) # Refresh rate 1Hz
+            torch.save(model.state_dict(), "temp_model_sync.pth")
+            
+            start_t = time.time()
+            pbar = tqdm(total=GAMES, desc="    Total Progress")
 
-            for future in concurrent.futures.as_completed(futures):
-                data, _ = future.result()
-                train_data += data
-            pbar.close()
+            with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
+                futures = [executor.submit(worker_execute_episode, "temp_model_sync.pth", shared_moves, shared_games) for _ in range(GAMES)]
+                
+                while True:
+                    results_count = sum(1 for f in futures if f.done())
+                    
+                    # Update UI postfix with global stats
+                    elapsed = time.time() - start_t
+                    total_moves = shared_moves.value
+                    global_sps = (total_moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
+                    
+                    # Update bar only as new games finish or during gaps
+                    pbar.n = results_count
+                    pbar.set_postfix_str(f"total_moves={total_moves} global_sps={global_sps:.1f}")
+                    pbar.refresh()
+                    
+                    if results_count == GAMES:
+                        break
+                    time.sleep(1) # Refresh rate 1Hz
+
+                for future in concurrent.futures.as_completed(futures):
+                    data, _ = future.result()
+                    train_data += data
+                pbar.close()
 
         print(f"    Self-play complete. Generated {len(train_data)} training examples.")
             

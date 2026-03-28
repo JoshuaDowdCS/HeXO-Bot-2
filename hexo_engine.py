@@ -24,13 +24,14 @@ class Hex:
         return [Hex(self.q + d.q, self.r + d.r) for d in directions]
 
 class HeXOEngine:
-    def __init__(self):
+    def __init__(self, boundary_radius: Optional[int] = None):
         self.board: Dict[Hex, int] = {}  # Hex -> player_id (1 or 2)
         self.turn_number = 1  # 1st turn, 2nd turn...
         self.current_player = 1
         self.moves_made_this_turn = 0
         self.game_over = False
-        self.winner = None
+        self.boundary_radius = boundary_radius
+        self._board_hash = 0 # Incremental hash
         
         # Cache of hexes reachable from current board state
         # Rule: Only update between players
@@ -38,13 +39,15 @@ class HeXOEngine:
         self.pending_cache_updates: List[Hex] = []
 
     def clone(self) -> 'HeXOEngine':
-        new_engine = HeXOEngine()
+        new_engine = HeXOEngine(boundary_radius=self.boundary_radius)
         new_engine.board = self.board.copy()
         new_engine.turn_number = self.turn_number
         new_engine.current_player = self.current_player
         new_engine.moves_made_this_turn = self.moves_made_this_turn
         new_engine.game_over = self.game_over
         new_engine.winner = self.winner
+        new_engine.boundary_radius = self.boundary_radius
+        new_engine._board_hash = self._board_hash
         new_engine.cached_reachable_hexes = self.cached_reachable_hexes.copy()
         new_engine.pending_cache_updates = self.pending_cache_updates.copy()
         return new_engine
@@ -74,6 +77,8 @@ class HeXOEngine:
         self.board[hex_coord] = self.current_player
         self.moves_made_this_turn += 1
         self.pending_cache_updates.append(hex_coord)
+        # Update incremental hash: hash of (Hex, player)
+        self._board_hash ^= hash((hex_coord, self.current_player))
         
         # Check for win condition
         if self._check_win(hex_coord):
@@ -102,7 +107,12 @@ class HeXOEngine:
         for stone_hex in self.pending_cache_updates:
             for q in range(-8, 9):
                 for r in range(max(-8, -q - 8), min(8, -q + 8) + 1):
-                    target = Hex(stone_hex.q + q, stone_hex.r + r)
+                    t_q, t_r = stone_hex.q + q, stone_hex.r + r
+                    # Boundary check for the NN grid (e.g. 21x21 -> radius 10)
+                    if self.boundary_radius is not None:
+                        if abs(t_q) > self.boundary_radius or abs(t_r) > self.boundary_radius:
+                            continue
+                    target = Hex(t_q, t_r)
                     self.cached_reachable_hexes.add(target)
                     
         self.pending_cache_updates.clear()
@@ -129,6 +139,10 @@ class HeXOEngine:
             if count >= 6:
                 return True
         return False
+
+    def get_state_key(self) -> int:
+        """Returns a stable hash representing the current player and board state."""
+        return hash((self._board_hash, self.current_player, self.moves_made_this_turn))
 
     def get_legal_moves(self) -> List[Hex]:
         if not self.board:
