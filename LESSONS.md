@@ -38,3 +38,7 @@
 ## Workflow Alignment
 *   **Split Development Strategy:** All development, code modification, and high-level planning are conducted on the local Mac. All heavy computation, training (AlphaZero simulations), and GPU-accelerated model refinement are strictly reserved for the dedicated Windows/RTX Ada workstation. 
 *   **Systematic Synchronization:** Before executing new training sessions on the remote machine, always push code changes from the local development agent (this Mac) to GitHub and pull on the workstation to ensure hardware-specific fixes (like the MCTS softmax stabilization) are properly ingested.
+
+## Bootstrapping & Training Data Diversity
+*   **Deterministic Bootstrapping:** A purely deterministic heuristic AI (especially with sorted moves and no tie-breaking randomness) can lead to identical "self-play" games during bootstrapping. This results in highly redundant training data and slows down exploration.
+*   **Tie-Breaking Randomness:** Shuffling moves with identical heuristic scores before sorting ensures that the AI explores different, equally viable paths. This is critical for generating diverse initial training data from a heuristic baseline.

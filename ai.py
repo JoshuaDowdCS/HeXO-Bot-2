@@ -123,6 +123,7 @@ class HeXOAI:
              score = self.evaluate_board(engine)
              del engine.board[h]
              move_scores.append((score, h))
+        random.shuffle(move_scores)
         candidates = [h for _, h in sorted(move_scores, key=lambda x: x[0], reverse=True)]
 
         best_move = candidates[0]
