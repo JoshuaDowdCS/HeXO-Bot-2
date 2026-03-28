@@ -268,6 +268,10 @@ def train_network():
     print()
     
     model = HeXONet(board_size=BOARD_SIZE).to(device)
+    if os.path.exists("hexo_model.pth"):
+        print(f"Loading existing model from hexo_model.pth...")
+        model.load_state_dict(torch.load("hexo_model.pth", map_location=device, weights_only=True))
+    
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
     
