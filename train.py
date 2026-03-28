@@ -178,7 +178,7 @@ class NeuralMCTS:
             return -1
         return 0
 
-def execute_episode(model):
+def execute_episode(model, pbar, start_t):
     train_examples = []
     state = HeXOEngine()
     mcts = NeuralMCTS(model)
@@ -199,7 +199,11 @@ def execute_episode(model):
         action = moves[idx]
         state.place_stone(action)
         
-        move_count = 0
+        # Real-time UI Telemetry Update
+        elapsed = time.time() - start_t
+        current_moves = len(train_examples)
+        sps = (current_moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
+        pbar.set_postfix_str(f"moves={current_moves} sps={sps:.1f}")
         
         if state.game_over:
             # Reconstruct targets corresponding to final game outcome
@@ -245,11 +249,8 @@ def train_network():
         pbar = tqdm(total=GAMES, desc="    Self-play", bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} games [{elapsed}<{remaining}] {postfix}")
         for i in range(GAMES):
             start_t = time.time()
-            data, moves = execute_episode(model)
-            elapsed = time.time() - start_t
-            sps = (moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
+            data, moves = execute_episode(model, pbar, start_t)
             train_data += data
-            pbar.set_postfix_str(f", moves={moves} sps={sps:.1f}")
             pbar.update(1)
         pbar.close()
             
