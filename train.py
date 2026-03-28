@@ -181,6 +181,10 @@ class NeuralMCTS:
 def execute_episode(model, pbar, start_t):
     train_examples = []
     state = HeXOEngine()
+    
+    # Auto-play the deterministically forced first move to prevent useless 0-state NN evaluations
+    state.place_stone(Hex(0, 0))
+    
     mcts = NeuralMCTS(model)
     
     while True:
