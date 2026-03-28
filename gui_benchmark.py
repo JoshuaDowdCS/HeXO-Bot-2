@@ -61,7 +61,7 @@ class HeXOGUIBenchmark:
         self.reset_game()
 
     def reset_game(self):
-        self.engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
+        self.engine = HeXOEngine()
         self.games_played += 1
         
         # Alternate who goes first in the engine

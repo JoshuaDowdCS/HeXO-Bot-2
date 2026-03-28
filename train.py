@@ -39,7 +39,11 @@ def encode_board(engine: HeXOEngine, player_id: int):
 
 def hex_to_idx(h: Hex):
     center = BOARD_SIZE // 2
-    return (h.q + center) * BOARD_SIZE + (h.r + center)
+    q_idx = h.q + center
+    r_idx = h.r + center
+    if 0 <= q_idx < BOARD_SIZE and 0 <= r_idx < BOARD_SIZE:
+        return q_idx * BOARD_SIZE + r_idx
+    return None
 
 def idx_to_hex(idx: int):
     center = BOARD_SIZE // 2
@@ -130,19 +134,27 @@ class NeuralMCTS:
             self.Ns[s] = 0
             return -v.item()
 
-        legal_moves = self.Vs[s]
-        
-        # Optimize Selection loop with NumPy
-        counts = np.array([self.Nsa.get((s, a), 0) for a in legal_moves])
-        q_vals = np.array([self.Qsa.get((s, a), 0) for a in legal_moves])
-        
         # Ps was stored as valid_pi (array of size 441)
-        indices = [hex_to_idx(a) for a in legal_moves]
+        # Filter out moves that are out of bounds for the NN
+        valid_legal_moves = []
+        indices = []
+        for a in legal_moves:
+            idx = hex_to_idx(a)
+            if idx is not None:
+                valid_legal_moves.append(a)
+                indices.append(idx)
+        
+        if not valid_legal_moves:
+            # If NO moves are in sight, the AI just picks one randomly to proceed
+            return -1  # Or some small penalty for being "off-board"
+            
         ps_vals = self.Ps[s][indices] 
+        counts = np.array([self.Nsa.get((s, a), 0) for a in valid_legal_moves])
+        q_vals = np.array([self.Qsa.get((s, a), 0) for a in valid_legal_moves])
         
         u = q_vals + self.c_puct * ps_vals * (math.sqrt(self.Ns[s] + 1e-8) / (1 + counts))
         best_idx = np.argmax(u)
-        best_act = legal_moves[best_idx]
+        best_act = valid_legal_moves[best_idx]
 
         next_s = state.clone()
         success = next_s.place_stone(best_act)

@@ -28,7 +28,7 @@ class RandomAI:
         return moves
 
 def play_game(player1, player2, verbose=False):
-    engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
+    engine = HeXOEngine()
     
     while not engine.game_over:
         current_ai = player1 if engine.current_player == 1 else player2

@@ -87,7 +87,7 @@ class HeXOGUI:
                     if event.key == pygame.K_2:
                         self.ai_active[2] = not self.ai_active[2]
                     if event.key == pygame.K_r:
-                        self.engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2) # Reset
+                        self.engine = HeXOEngine() # Reset
 
                 if event.type == pygame.MOUSEBUTTONDOWN and not self.engine.game_over:
                     if not self.ai_active.get(self.engine.current_player):
@@ -144,6 +144,6 @@ class HeXOGUI:
         pygame.quit()
 
 if __name__ == "__main__":
-    engine = HeXOEngine(boundary_radius=BOARD_SIZE // 2)
+    engine = HeXOEngine()
     gui = HeXOGUI(engine)
     gui.run()
