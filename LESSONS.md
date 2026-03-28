@@ -42,3 +42,7 @@
 ## Bootstrapping & Training Data Diversity
 *   **Deterministic Bootstrapping:** A purely deterministic heuristic AI (especially with sorted moves and no tie-breaking randomness) can lead to identical "self-play" games during bootstrapping. This results in highly redundant training data and slows down exploration.
 *   **Tie-Breaking Randomness:** Shuffling moves with identical heuristic scores before sorting ensures that the AI explores different, equally viable paths. This is critical for generating diverse initial training data from a heuristic baseline.
+
+## Heuristic Integrity & Symmetry
+*   **Asymmetric Coding Risks:** Hardcoding logic for specific player IDs (e.g., `if player == 1`) in heuristic search often leads to "suicidal" or "traitorous" agents if signs are not perfectly mirrored. A bug in the HeXO AI created a "traitorous" condition where Player 2 actually perceived an opponent's near-win as a massive positive score, forcing Player 2 to intentionally lose in just 5-6 moves.
+*   **Symmetric Design:** Always implement heuristic evaluations using relative IDs (`self.player_id` vs `self.opponent_id`). This ensures that the same logical framework applies to both players, preventing sign errors and ensuring that "defense" and "offense" are consistently applied regardless of who is playing.

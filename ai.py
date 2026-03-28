@@ -26,30 +26,27 @@ class HeXOAI:
                     active_lines.add((sq, sr, dq, dr))
 
         for sq, sr, dq, dr in active_lines:
-            p1_count = 0
-            p2_count = 0
+            counts = {1: 0, 2: 0, None: 0}
             for i in range(6):
-                curr = Hex(sq + dq * i, sr + dr * i)
-                p = engine.board.get(curr)
-                if p == 1: p1_count += 1
-                elif p == 2: p2_count += 1
+                p = engine.board.get(Hex(sq + dq * i, sr + dr * i))
+                counts[p] += 1
             
-            if p1_count > 0 and p2_count == 0:
-                val = self._score_line(p1_count)
-                score += val if self.player_id == 1 else -val
-            elif p2_count > 0 and p1_count == 0:
-                val = self._score_line(p2_count)
-                score += val if self.player_id == 2 else -val
+            my_c = counts[self.player_id]
+            opp_c = counts[self.opponent_id]
             
-            if self.player_id == 1 and p2_count >= 5 and p1_count == 0:
-                 score -= 100000
-            elif self.player_id == 1 and p2_count >= 4 and p1_count == 0:
-                 score -= 1000
-                 
-            if self.player_id == 2 and p1_count >= 5 and p2_count == 0:
-                 score += 100000
-            elif self.player_id == 2 and p1_count >= 4 and p2_count == 0:
-                 score += 1000
+            if my_c > 0 and opp_c == 0:
+                # Scoring for our own potential lines
+                score += self._score_line(my_c)
+            elif opp_c > 0 and my_c == 0:
+                # Penalty for opponent's potential lines
+                val = self._score_line(opp_c)
+                score -= val
+                # Critical defensive panic for threats near win
+                if opp_c >= 5:
+                    score -= 200000 # Prioritize blocking 5-in-a-row extremely highly
+                elif opp_c >= 4:
+                    score -= 5000 
+
 
         return score
 
