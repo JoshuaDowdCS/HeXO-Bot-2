@@ -69,7 +69,7 @@ class NeuralMCTS:
     def getActionProb(self, state: HeXOEngine, temp=1):
         # We need a string representation of the state
         # In HeXO, stones and current player define the state
-        s = str(sorted(state.board.items())) + str(state.current_player)
+        s = str(sorted(state.board.items(), key=lambda x: (x[0].q, x[0].r))) + str(state.current_player)
         
         for _ in range(SIMULATIONS):
              self.search(state)
@@ -94,7 +94,7 @@ class NeuralMCTS:
 
     def search(self, state: HeXOEngine):
         import copy
-        s = str(sorted(state.board.items())) + str(state.current_player)
+        s = str(sorted(state.board.items(), key=lambda x: (x[0].q, x[0].r))) + str(state.current_player)
         
         if s not in self.Es:
             self.Es[s] = self._check_terminal(state)
@@ -208,7 +208,7 @@ def train_network():
     print(f"Initializing Neural Network on device: {device}")
     model = HeXONet(board_size=BOARD_SIZE).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-    scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None
+    scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
     
     for epoch in range(EPOCHS):
         print(f"--- Epoch {epoch+1}/{EPOCHS} ---")
