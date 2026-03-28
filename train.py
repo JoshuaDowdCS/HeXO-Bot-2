@@ -178,7 +178,7 @@ class NeuralMCTS:
             return -1
         return 0
 
-def worker_execute_episode(weights_path):
+def worker_execute_episode(weights_path, shared_moves=None, shared_games=None):
     # Re-initialize for worker subprocess
     worker_device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
     worker_model = HeXONet(board_size=BOARD_SIZE).to(worker_device)
@@ -191,7 +191,6 @@ def worker_execute_episode(weights_path):
     mcts = NeuralMCTS(worker_model)
     
     while True:
-        # We don't need UI progress bars in individual workers
         temp = int(state.turn_number < 15)
         pi, moves = mcts.getActionProb(state, temp=temp)
         
@@ -202,6 +201,8 @@ def worker_execute_episode(weights_path):
                 pi_target[idx] = p
                 
         train_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
+        if shared_moves:
+             shared_moves.value += 1
         
         idx = np.random.choice(len(moves), p=pi)
         action = moves[idx]
@@ -212,12 +213,14 @@ def worker_execute_episode(weights_path):
             for e in train_examples:
                 z = 1 if e[1] == state.winner else -1
                 r.append((e[0], e[2], z))
+            if shared_games: shared_games.value += 1
             return r, len(train_examples)
             
         if len(train_examples) >= 200: # Limit early games
             r = []
             for e in train_examples:
                 r.append((e[0], e[2], 0))
+            if shared_games: shared_games.value += 1
             return r, len(train_examples)
 
 def execute_episode(model, pbar, start_t):
@@ -303,28 +306,37 @@ def train_network():
         
         print(f"    Generating {GAMES} games across {NUM_WORKERS} workers...")
         
-        # Parallel game generation
+        from multiprocessing import Manager, Value
+        manager = Manager()
+        shared_moves = manager.Value('i', 0)
+        shared_games = manager.Value('i', 0)
+        
+        torch.save(model.state_dict(), "temp_model_sync.pth")
+        
+        start_t = time.time()
+        pbar = tqdm(total=GAMES, desc="    Total Progress")
+
         with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
-            # We must pass a path or a state_dict to reconstruct the model in each process
-            # since a full torch Model can't always be pickled across processes cleanly with CUDA.
-            # However, for simplicity here we pass the current model if it works, 
-            # or just load it inside each process. 
-            # A more robust way is to save a temp weight file.
-            torch.save(model.state_dict(), "temp_model_sync.pth")
+            futures = [executor.submit(worker_execute_episode, "temp_model_sync.pth", shared_moves, shared_games) for _ in range(GAMES)]
             
-            futures = []
-            results_count = 0
-            pbar = tqdm(total=GAMES, desc="    Total Progress")
-            
-            # Start games
-            for _ in range(GAMES):
-                futures.append(executor.submit(worker_execute_episode, "temp_model_sync.pth"))
-            
+            while results_count := sum(1 for f in futures if f.done()):
+                # Update UI postfix with global stats
+                elapsed = time.time() - start_t
+                total_moves = shared_moves.value
+                global_sps = (total_moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
+                
+                # Update bar only as new games finish or during gaps
+                pbar.n = results_count
+                pbar.set_postfix_str(f"total_moves={total_moves} global_sps={global_sps:.1f}")
+                pbar.refresh()
+                
+                if results_count == GAMES:
+                    break
+                time.sleep(1) # Refresh rate 1Hz
+
             for future in concurrent.futures.as_completed(futures):
-                data, moves = future.result()
+                data, _ = future.result()
                 train_data += data
-                results_count += 1
-                pbar.update(1)
             pbar.close()
 
         print(f"    Self-play complete. Generated {len(train_data)} training examples.")
