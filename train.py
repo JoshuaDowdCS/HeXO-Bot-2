@@ -314,37 +314,48 @@ def execute_episode(model, pbar, start_t):
                 r.append((e[0], e[2], 0))  # Draw = 0 reward
             return r, len(train_examples)
 
-def bootstrap_with_heuristic(num_games=10):
+def _worker_bootstrap_episode(game_idx):
     from ai import HeXOAI
-    print(f"    [BOOTSTRAPPING] Generating {num_games} games from Heuristic AI...")
+    state = HeXOEngine()
+    state.place_stone(Hex(0, 0))
+    h_ai = {1: HeXOAI(1), 2: HeXOAI(2)}
+    game_examples = []
+    
+    # 0.1s is enough for depth-4 search which is plenty for decent bootstrapping
+    while not state.game_over and len(game_examples) < 200:
+         moves = h_ai[state.current_player].choose_move(state, time_limit=0.1)
+         
+         # Create a target policy from heuristic move
+         pi_target = np.zeros(BOARD_SIZE * BOARD_SIZE)
+         offset_q, offset_r = get_board_centroid(state)
+         for m in moves:
+              idx = hex_to_idx(m, offset_q, offset_r)
+              if idx is not None:
+                   pi_target[idx] = 1.0 / len(moves)
+         
+         game_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
+         for m in moves: state.place_stone(m)
+         
+    # Value targets
+    train_data = []
+    for e in game_examples:
+        z = 1 if e[1] == state.winner else (-1 if state.winner is not None else 0)
+        train_data.append((e[0], e[2], z))
+    return train_data, len(game_examples)
+
+def bootstrap_with_heuristic(num_games=10):
+    import concurrent.futures
+    from tqdm import tqdm
+    print(f"    [BOOTSTRAPPING] Generating {num_games} games in parallel...")
     train_data = []
     
-    for i in range(num_games):
-        state = HeXOEngine()
-        state.place_stone(Hex(0, 0))
-        h_ai = {1: HeXOAI(1), 2: HeXOAI(2)}
-        game_examples = []
-        
-        while not state.game_over and len(game_examples) < 200:
-             moves = h_ai[state.current_player].choose_move(state)
-             
-             # Create a target policy from heuristic move
-             pi_target = np.zeros(BOARD_SIZE * BOARD_SIZE)
-             offset_q, offset_r = get_board_centroid(state)
-             for m in moves:
-                  idx = hex_to_idx(m, offset_q, offset_r)
-                  if idx is not None:
-                       pi_target[idx] = 1.0 / len(moves)
-             
-             game_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
-             for m in moves: state.place_stone(m)
-             
-        # Value targets
-        for e in game_examples:
-            z = 1 if e[1] == state.winner else (-1 if state.winner is not None else 0)
-            train_data.append((e[0], e[2], z))
+    with concurrent.futures.ProcessPoolExecutor(max_workers=min(num_games, NUM_WORKERS)) as executor:
+        futures = [executor.submit(_worker_bootstrap_episode, i) for i in range(num_games)]
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            data, moves_count = future.result()
+            train_data += data
+            print(f"      Game {i+1}/{num_games} done ({moves_count} moves)")
             
-        print(f"      Game {i+1}/{num_games} done ({len(game_examples)} moves)")
     return train_data
 
 def train_network():

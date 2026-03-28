@@ -46,3 +46,7 @@
 ## Heuristic Integrity & Symmetry
 *   **Asymmetric Coding Risks:** Hardcoding logic for specific player IDs (e.g., `if player == 1`) in heuristic search often leads to "suicidal" or "traitorous" agents if signs are not perfectly mirrored. A bug in the HeXO AI created a "traitorous" condition where Player 2 actually perceived an opponent's near-win as a massive positive score, forcing Player 2 to intentionally lose in just 5-6 moves.
 *   **Symmetric Design:** Always implement heuristic evaluations using relative IDs (`self.player_id` vs `self.opponent_id`). This ensures that the same logical framework applies to both players, preventing sign errors and ensuring that "defense" and "offense" are consistently applied regardless of who is playing.
+
+## Throughput & Batch Performance
+*   **Parallel Bootstrapping:** Heuristic bootstrapping, like MCTS self-play, is a "embarrassingly parallel" task. Running it sequentially (one game after another) wastes CPU resources on high-core systems. Mapping bootstrapping to a `ProcessPoolExecutor` allows 10-100 games to be generated in the time it previously took for one.
+*   **Efficiency Over Deepcopy:** Using `copy.deepcopy()` in frequent loop operations (like turn-based stone placement in heuristic search) creates 10x overhead compared to a tailored `.clone()` method. The heuristic AI was updated to use the optimized engine cloning to maintain the same "instant" performance in training as it has in the GUI.

@@ -91,14 +91,13 @@ class HeXOAI:
         engine.game_over = go
         engine.winner = w
 
-    def choose_move(self, engine: HeXOEngine) -> List[Hex]:
-        import copy
+    def choose_move(self, engine: HeXOEngine, time_limit: float = 2.5) -> List[Hex]:
         moves_needed = engine.get_moves_allowed() - engine.moves_made_this_turn
-        sim_engine = copy.deepcopy(engine)
+        sim_engine = engine.clone()
         moves = []
         for _ in range(moves_needed):
-            # Time limit 2.5s per move, meaning 5s per turn max
-            best_move = self.iterative_deepening_search(sim_engine, time_limit=2.5)
+            # Dynamic time limit per stone placement
+            best_move = self.iterative_deepening_search(sim_engine, time_limit=time_limit)
             if best_move:
                 moves.append(best_move)
                 sim_engine.place_stone(best_move)
