@@ -18,6 +18,11 @@ SIMULATIONS = 160 # Deeper MCTS for higher quality data
 GAMES = 60        # More games per epoch
 NUM_WORKERS = 8   # Parallel self-play processes (utilize those 20 threads!)
 
+device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
+if device.type == 'cuda':
+    torch.backends.cudnn.benchmark = True 
+    torch.set_float32_matmul_precision('high') 
+
 def encode_board(engine: HeXOEngine, player_id: int):
     # Center (0,0) mapped to (10, 10). Wait, q and r can range more if stones expand 
     # but the max distance is tightly controlled by the engine if the board starts at 0,0.
