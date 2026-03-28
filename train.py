@@ -182,7 +182,7 @@ def worker_execute_episode(weights_path):
     # Re-initialize for worker subprocess
     worker_device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
     worker_model = HeXONet(board_size=BOARD_SIZE).to(worker_device)
-    worker_model.load_state_dict(torch.load(weights_path, map_location=worker_device))
+    worker_model.load_state_dict(torch.load(weights_path, map_location=worker_device, weights_only=True))
     worker_model.eval()
     
     train_examples = []

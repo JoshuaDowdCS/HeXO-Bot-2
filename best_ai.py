@@ -16,7 +16,7 @@ class HeXOBestAI:
             print(f"Loading best model for Player {player_id} from {model_path}...")
             self.model = HeXONet(board_size=BOARD_SIZE).to(device)
             # Add weights_only=True for safe loading, or just ignore for now
-            self.model.load_state_dict(torch.load(model_path, map_location=device))
+            self.model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
             self.model.eval()
             self.mcts = NeuralMCTS(self.model)
         else:
