@@ -11,12 +11,14 @@ import math
 import numpy as np
 
 # Training Constants optimized for high-end Dell Precision (i7-13800H + RTX Ada)
-BATCH_SIZE = 256  # Larger batch for better GPU utilization
-EPOCHS = 20       # More epochs for better convergence
-BOARD_SIZE = 21   
-SIMULATIONS = 160 # Deeper MCTS for higher quality data
-GAMES = 60        # More games per epoch
-NUM_WORKERS = 8   # Parallel self-play processes (utilize those 20 threads!)
+# 31x31 allows for radius 15 sight, covering most HeXO games easily.
+BATCH_SIZE = 256  
+EPOCHS = 20       
+BOARD_SIZE = 31   
+SIMULATIONS = 200 # Higher quality MCTS to learn defensive structures
+GAMES = 60        
+NUM_WORKERS = 16  # Parallel self-play (maximizes 20 threads)
+BOOTSTRAP_GAMES = 10 # Initial games from Heuristic AI to avoid starting from zero
 
 device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
 if device.type == 'cuda':
@@ -87,6 +89,9 @@ class NeuralMCTS:
         legal_moves = state.get_legal_moves()
         counts = [self.Nsa.get((s, m), 0) for m in legal_moves]
         
+        if len(legal_moves) == 0:
+            return [], []
+            
         if sum(counts) == 0:
             # Fallback if unexpanded
             probs = [1.0/len(legal_moves)] * len(legal_moves)
@@ -117,9 +122,13 @@ class NeuralMCTS:
                 with torch.autocast(device_type=device.type, enabled=(device.type == 'cuda')):
                     pi, v = self.model(board_tensor)
                 
-            pi = torch.exp(pi).cpu().numpy()[0]
+            pi = torch.softmax(pi, dim=1).cpu().numpy()[0]
             
             legal_moves = state.get_legal_moves()
+            if not legal_moves:
+                self.Es[s] = -0.1 # Draw/Invalid
+                return 0.1
+
             self.Vs[s] = legal_moves
             offset_q, offset_r = get_board_centroid(state)
             
@@ -131,14 +140,21 @@ class NeuralMCTS:
                     valid_pi[idx] = pi[idx]
             
             sum_Ps_s = np.sum(valid_pi)
-            if sum_Ps_s > 0:
+            if sum_Ps_s > 1e-9:
                 valid_pi /= sum_Ps_s
             else:
-                # Fallback: find closest move to center if all out of sight
-                # (Shouldn't happen with 8-hex rule and 21x21 window)
+                # Fallback: uniform over legal moves in sight
+                in_sight = 0
                 for m in legal_moves:
                     idx = hex_to_idx(m, offset_q, offset_r)
-                    if idx is not None: valid_pi[idx] = 1.0 / len(legal_moves)
+                    if idx is not None:
+                        valid_pi[idx] = 1.0
+                        in_sight += 1
+                if in_sight > 0:
+                    valid_pi /= in_sight
+                else:
+                    # Rare: all moves out of sight, just allow expansion
+                    pass
             
             self.Ps[s] = valid_pi
             self.Ns[s] = 0
@@ -226,6 +242,9 @@ def worker_execute_episode(weights_path, shared_moves=None, shared_games=None):
         if shared_moves:
              shared_moves.value += 1
         
+        if not moves:
+             break
+
         idx = np.random.choice(len(moves), p=pi)
         action = moves[idx]
         state.place_stone(action)
@@ -267,6 +286,9 @@ def execute_episode(model, pbar, start_t):
                 
         train_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
         
+        if not moves:
+             break
+
         idx = np.random.choice(len(moves), p=pi)
         action = moves[idx]
         state.place_stone(action)
@@ -291,6 +313,39 @@ def execute_episode(model, pbar, start_t):
             for e in train_examples:
                 r.append((e[0], e[2], 0))  # Draw = 0 reward
             return r, len(train_examples)
+
+def bootstrap_with_heuristic(num_games=10):
+    from ai import HeXOAI
+    print(f"    [BOOTSTRAPPING] Generating {num_games} games from Heuristic AI...")
+    train_data = []
+    
+    for i in range(num_games):
+        state = HeXOEngine()
+        state.place_stone(Hex(0, 0))
+        h_ai = {1: HeXOAI(1), 2: HeXOAI(2)}
+        game_examples = []
+        
+        while not state.game_over and len(game_examples) < 200:
+             moves = h_ai[state.current_player].choose_move(state)
+             
+             # Create a target policy from heuristic move
+             pi_target = np.zeros(BOARD_SIZE * BOARD_SIZE)
+             offset_q, offset_r = get_board_centroid(state)
+             for m in moves:
+                  idx = hex_to_idx(m, offset_q, offset_r)
+                  if idx is not None:
+                       pi_target[idx] = 1.0 / len(moves)
+             
+             game_examples.append([encode_board(state, state.current_player), state.current_player, pi_target])
+             for m in moves: state.place_stone(m)
+             
+        # Value targets
+        for e in game_examples:
+            z = 1 if e[1] == state.winner else (-1 if state.winner is not None else 0)
+            train_data.append((e[0], e[2], z))
+            
+        print(f"      Game {i+1}/{num_games} done ({len(game_examples)} moves)")
+    return train_data
 
 def train_network():
     print(f"HeXO Training — Device: {device}")
@@ -329,8 +384,15 @@ def train_network():
 
     for epoch in range(EPOCHS):
         print(f"── Epoch {epoch+1}/{EPOCHS} ──")
+        
+        # Heuristic Bootstrapping for Epoch 1 only
+        if epoch == 0 and BOOTSTRAP_GAMES > 0:
+            train_data = bootstrap_with_heuristic(BOOTSTRAP_GAMES)
+            print(f"    Bootstrap complete. Playing self-play games to refine...")
+        else:
+            train_data = []
+        
         model.eval()
-        train_data = []
         
         print(f"    Generating {GAMES} games across {NUM_WORKERS} workers...")
         
