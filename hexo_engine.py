@@ -30,6 +30,7 @@ class HeXOEngine:
         self.current_player = 1
         self.moves_made_this_turn = 0
         self.game_over = False
+        self.winner = None
         self.boundary_radius = boundary_radius
         self._board_hash = 0 # Incremental hash
         
