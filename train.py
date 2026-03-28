@@ -152,7 +152,10 @@ class NeuralMCTS:
         if best_act is None: best_act = random.choice(legal_moves)
 
         next_s = copy.deepcopy(state)
-        next_s.place_stone(best_act)
+        success = next_s.place_stone(best_act)
+        if not success:
+             # Safety fallback: Illegal moves should be drastically penalized during MCTS loop
+             return -100
 
         v = self.search(next_s)
 

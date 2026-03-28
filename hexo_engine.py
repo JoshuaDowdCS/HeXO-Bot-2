@@ -128,4 +128,8 @@ class HeXOEngine:
             self._update_reachable_cache()
             
         # Return all in cache that are empty
-        return sorted(list(self.cached_reachable_hexes), key=lambda h: (h.q, h.r))
+        valid_moves = [h for h in self.cached_reachable_hexes if h not in self.board]
+        # In the exceedingly rare exact-fill case, fallback
+        if not valid_moves:
+             return [] 
+        return sorted(valid_moves, key=lambda h: (h.q, h.r))
