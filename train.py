@@ -309,7 +309,7 @@ def execute_episode(model, pbar, start_t):
 
         elapsed = time.time() - start_t
         current_moves = len(train_examples)
-        sps = (current_moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
+        sps = (current_moves * SIMULATIONS_MAX) / elapsed if elapsed > 0 else 0
         pbar.set_postfix_str(f"moves={current_moves} sps={sps:.1f}")
 
         if state.game_over:
@@ -373,7 +373,7 @@ def bootstrap_with_heuristic(num_games=10):
 # ── Main Training Loop ─────────────────────────────────────────────────
 def train_network():
     print(f"HeXO Training (MLP) — Device: {device}")
-    print(f"Config: {GAMES} games × {SIMULATIONS} sims, batch={BATCH_SIZE}")
+    print(f"Config: {GAMES} games × {SIMULATIONS_MIN}-{SIMULATIONS_MAX} sims (scheduled), batch={BATCH_SIZE}")
     print(f"Sight: hex radius {INPUT_RADIUS} ({NUM_CELLS} cells, {NUM_CELLS*3+NUM_GLOBAL_FEATURES} input features)")
     print()
 
