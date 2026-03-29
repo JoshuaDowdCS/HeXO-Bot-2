@@ -68,11 +68,13 @@ class HeXOMlpNet(nn.Module):
         self.num_cells = 3 * input_radius**2 + 3 * input_radius + 1
         input_size = self.num_cells * 3 + num_global_features
 
-        # Shared trunk
+        # Shared trunk with dropout for regularization
         self.fc1 = nn.Linear(input_size, 512)
         self.bn1 = nn.BatchNorm1d(512)
+        self.drop1 = nn.Dropout(0.2)
         self.fc2 = nn.Linear(512, 256)
         self.bn2 = nn.BatchNorm1d(256)
+        self.drop2 = nn.Dropout(0.2)
         self.fc3 = nn.Linear(256, 128)
         self.bn3 = nn.BatchNorm1d(128)
 
@@ -85,8 +87,8 @@ class HeXOMlpNet(nn.Module):
         self.val_fc2 = nn.Linear(64, 1)
 
     def forward(self, x):
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = F.relu(self.bn2(self.fc2(x)))
+        x = self.drop1(F.relu(self.bn1(self.fc1(x))))
+        x = self.drop2(F.relu(self.bn2(self.fc2(x))))
         x = F.relu(self.bn3(self.fc3(x)))
 
         pol = F.relu(self.pol_fc1(x))

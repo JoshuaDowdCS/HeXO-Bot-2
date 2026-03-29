@@ -15,11 +15,18 @@ BATCH_SIZE = 256
 EPOCHS = 20
 INPUT_RADIUS = 15       # Hex sight radius (covers 30 hexes across)
 NUM_GLOBAL_FEATURES = 6  # Global awareness features
-SIMULATIONS = 200
+SIMULATIONS_MIN = 50     # Starting sim budget (model is weak early)
+SIMULATIONS_MAX = 200    # Full sim budget (later epochs)
 GAMES = 60
 NUM_WORKERS = 16
 BOOTSTRAP_GAMES = 10
 REPLAY_MEMORY_SIZE = 500
+TRAIN_PASSES = 4          # Gradient passes per epoch over replay buffer
+GRAD_CLIP_NORM = 1.0      # Gradient clipping max norm
+
+def get_simulations(epoch):
+    """Ramp simulation budget linearly from MIN to MAX across epochs."""
+    return int(SIMULATIONS_MIN + (SIMULATIONS_MAX - SIMULATIONS_MIN) * min(epoch / (EPOCHS - 1), 1.0))
 
 # ── Precompute hex grid (deterministic ordering) ───────────────────────
 GRID_CELLS = build_hex_grid(INPUT_RADIUS)
@@ -108,10 +115,10 @@ class NeuralMCTS:
         self.Vs = {}
         self.Ps_indices = {}
 
-    def getActionProb(self, state: HeXOEngine, temp=1):
+    def getActionProb(self, state: HeXOEngine, temp=1, num_simulations=200):
         s = state.get_state_key()
 
-        for _ in range(SIMULATIONS):
+        for _ in range(num_simulations):
             self.search(state)
 
         legal_moves = state.get_legal_moves()
@@ -225,7 +232,7 @@ class NeuralMCTS:
 
 
 # ── Self-Play Workers ──────────────────────────────────────────────────
-def worker_execute_episode(weights_path, shared_moves=None, shared_games=None):
+def worker_execute_episode(weights_path, num_sims=200, shared_moves=None, shared_games=None):
     worker_device = torch.device('cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu'))
     worker_model = HeXOMlpNet(input_radius=INPUT_RADIUS, num_global_features=NUM_GLOBAL_FEATURES).to(worker_device)
     worker_model.load_state_dict(torch.load(weights_path, map_location=worker_device, weights_only=True))
@@ -237,8 +244,8 @@ def worker_execute_episode(weights_path, shared_moves=None, shared_games=None):
     mcts = NeuralMCTS(worker_model)
 
     while True:
-        temp = int(state.turn_number < 15)
-        pi, moves = mcts.getActionProb(state, temp=temp)
+        temp = max(0.1, 1.0 - (state.turn_number / 25.0))  # Smooth decay
+        pi, moves = mcts.getActionProb(state, temp=temp, num_simulations=num_sims)
 
         offset_q, offset_r = state.get_centroid()
         pi_target = np.zeros(NUM_CELLS)
@@ -281,8 +288,8 @@ def execute_episode(model, pbar, start_t):
     mcts = NeuralMCTS(model)
 
     while True:
-        temp = int(state.turn_number < 15)
-        pi, moves = mcts.getActionProb(state, temp=temp)
+        temp = max(0.1, 1.0 - (state.turn_number / 25.0))  # Smooth decay
+        pi, moves = mcts.getActionProb(state, temp=temp, num_simulations=SIMULATIONS_MAX)
 
         offset_q, offset_r = state.get_centroid()
         pi_target = np.zeros(NUM_CELLS)
@@ -378,6 +385,7 @@ def train_network():
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
 
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-5)
     scaler = torch.amp.GradScaler('cuda') if device.type == 'cuda' else None
 
     print("-" * 50)
@@ -413,8 +421,9 @@ def train_network():
             new_experience = bootstrap_with_heuristic(BOOTSTRAP_GAMES)
             print(f"    Bootstrap complete. Adding to memory...")
 
+        num_sims = get_simulations(epoch)
         model.eval()
-        print(f"    Generating {GAMES} games across {NUM_WORKERS} workers...")
+        print(f"    Generating {GAMES} games across {NUM_WORKERS} workers ({num_sims} sims/move)...")
 
         with Manager() as manager:
             shared_moves = manager.Value('i', 0)
@@ -426,14 +435,14 @@ def train_network():
             pbar = tqdm(total=GAMES, desc="    Total Progress")
 
             with concurrent.futures.ProcessPoolExecutor(max_workers=NUM_WORKERS) as executor:
-                futures = [executor.submit(worker_execute_episode, "temp_mlp_sync.pth", shared_moves, shared_games) for _ in range(GAMES)]
+                futures = [executor.submit(worker_execute_episode, "temp_mlp_sync.pth", num_sims, shared_moves, shared_games) for _ in range(GAMES)]
 
                 while True:
                     results_count = sum(1 for f in futures if f.done())
 
                     elapsed = time.time() - start_t
                     total_moves = shared_moves.value
-                    global_sps = (total_moves * SIMULATIONS) / elapsed if elapsed > 0 else 0
+                    global_sps = (total_moves * num_sims) / elapsed if elapsed > 0 else 0
 
                     pbar.n = results_count
                     pbar.set_postfix_str(f"total_moves={total_moves} global_sps={global_sps:.1f}")
@@ -457,36 +466,45 @@ def train_network():
         print(f"    Self-play complete. Epoch added {len(new_experience)} examples. Memory Pool: {len(replay_buffer)}.")
 
         dataset = HeXODataset(replay_buffer)
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=False)
+        dl_kwargs = {'num_workers': 4, 'pin_memory': True} if device.type == 'cuda' else {}
+        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=False, **dl_kwargs)
 
         model.train()
         total_loss = 0
+        total_batches = 0
 
-        for boards, pis, zs in dataloader:
-            boards, pis, zs = boards.to(device), pis.to(device), zs.to(device)
-            optimizer.zero_grad()
+        for pass_num in range(TRAIN_PASSES):
+            for boards, pis, zs in dataloader:
+                boards, pis, zs = boards.to(device), pis.to(device), zs.to(device)
+                optimizer.zero_grad()
 
-            if device.type == 'cuda':
-                with torch.autocast(device_type='cuda'):
+                if device.type == 'cuda':
+                    with torch.autocast(device_type='cuda'):
+                        out_pi, out_v = model(boards)
+                        loss_pi = -torch.sum(pis * F.log_softmax(out_pi, dim=1)) / boards.size(0)
+                        loss_v = F.mse_loss(out_v.squeeze(-1), zs)
+                        loss = loss_pi + loss_v
+
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
                     out_pi, out_v = model(boards)
                     loss_pi = -torch.sum(pis * F.log_softmax(out_pi, dim=1)) / boards.size(0)
                     loss_v = F.mse_loss(out_v.squeeze(-1), zs)
                     loss = loss_pi + loss_v
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
+                    optimizer.step()
 
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                out_pi, out_v = model(boards)
-                loss_pi = -torch.sum(pis * F.log_softmax(out_pi, dim=1)) / boards.size(0)
-                loss_v = F.mse_loss(out_v.squeeze(-1), zs)
-                loss = loss_pi + loss_v
-                loss.backward()
-                optimizer.step()
+                total_loss += loss.item()
+                total_batches += 1
 
-            total_loss += loss.item()
-
-        print(f"Epoch {epoch+1} Average Loss: {total_loss/len(dataloader):.4f}")
+        scheduler.step()
+        avg_loss = total_loss / total_batches if total_batches > 0 else 0
+        print(f"Epoch {epoch+1} Average Loss: {avg_loss:.4f} (LR: {scheduler.get_last_lr()[0]:.6f}, {TRAIN_PASSES} passes)")
         torch.save(model.state_dict(), model_path)
 
     print(f"Training complete! Model saved to {model_path}")

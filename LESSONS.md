@@ -63,3 +63,10 @@
 *   **Hex-Distance Boundary:** The engine's boundary check was originally square (`|q| ≤ R` and `|r| ≤ R`), which allowed placements at hex-distance > R from origin (e.g., (15, 15) has hex-distance 30). Switching to proper hex-distance boundary (`Hex.distance(origin) ≤ R`) ensures the engine's playable area matches the NN's hexagonal sight grid exactly.
 *   **Model File Separation:** New architecture saves to `hexo_mlp_model.pth` (not `hexo_model.pth`) to avoid state-dict conflicts with the old CNN model. The temp sync file also uses a distinct name (`temp_mlp_sync.pth`).
 *   **Always discuss before implementing:** The user prefers to evaluate and discuss architectural changes before code is written. Present trade-offs and get approval first.
+
+## Training Efficiency & Convergence
+*   **Multi-Pass Training:** Self-play data is extremely expensive to generate (MCTS + NN inference per move). Running only 1 gradient-descent pass over the replay buffer per epoch massively under-utilizes this data. Running 3-5 passes extracts far more learning signal at negligible compute cost (NN training is trivially fast vs. self-play generation).
+*   **Learning Rate Scheduling:** A fixed LR (e.g., 0.001) for all epochs causes overshooting in later stages when the loss surface is more refined. Cosine annealing or OneCycleLR provides free convergence improvement.
+*   **Simulation Budget Scaling:** Running 200 MCTS simulations when the model is weak (early epochs) is wasteful — the NN policy prior is near-random anyway. A simulation schedule (e.g., 50 + 10*epoch) allocates compute proportionally to model quality.
+*   **Gradient Clipping:** Without `clip_grad_norm_`, loss spikes from unusual game positions can cause destructive weight updates that undo multiple epochs of learning. A `max_norm=1.0` clip is a free stability guarantee.
+*   **Batched MCTS Inference:** Single-sample NN forward passes (batch_size=1) during MCTS search are the single largest bottleneck. Collecting multiple leaf nodes and evaluating them in one batched forward pass can yield 3-5× speedups but requires significant architectural changes to the search loop.
