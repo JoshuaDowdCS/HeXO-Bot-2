@@ -33,6 +33,7 @@ class HeXOEngine:
         self.winner = None
         self.boundary_radius = boundary_radius
         self._board_hash = 0 # Incremental hash
+        self._centroid_cache: Optional[Tuple[int, int]] = None
         
         # Cache of hexes reachable from current board state
         # Rule: Only update between players
@@ -49,9 +50,26 @@ class HeXOEngine:
         new_engine.winner = self.winner
         new_engine.boundary_radius = self.boundary_radius
         new_engine._board_hash = self._board_hash
+        new_engine._centroid_cache = self._centroid_cache
         new_engine.cached_reachable_hexes = self.cached_reachable_hexes.copy()
         new_engine.pending_cache_updates = self.pending_cache_updates.copy()
         return new_engine
+
+    def get_centroid(self) -> Tuple[int, int]:
+        if self._centroid_cache is not None:
+            return self._centroid_cache
+        if not self.board:
+            return 0, 0
+        
+        # We can calculate this more efficiently than list comprehension + mean
+        sum_q = 0
+        sum_r = 0
+        for h in self.board:
+            sum_q += h.q
+            sum_r += h.r
+        count = len(self.board)
+        self._centroid_cache = (int(round(sum_q / count)), int(round(sum_r / count)))
+        return self._centroid_cache
 
     def get_moves_allowed(self) -> int:
         if self.turn_number == 1:
@@ -80,6 +98,7 @@ class HeXOEngine:
         self.pending_cache_updates.append(hex_coord)
         # Update incremental hash: hash of (Hex, player)
         self._board_hash ^= hash((hex_coord, self.current_player))
+        self._centroid_cache = None # Invalidate centroid cache
         
         # Check for win condition
         if self._check_win(hex_coord):
@@ -111,7 +130,8 @@ class HeXOEngine:
                     t_q, t_r = stone_hex.q + q, stone_hex.r + r
                     # Boundary check for the NN grid (e.g. 21x21 -> radius 10)
                     if self.boundary_radius is not None:
-                        if abs(t_q) > self.boundary_radius or abs(t_r) > self.boundary_radius:
+                        target = Hex(t_q, t_r)
+                        if target.distance(Hex(0, 0)) > self.boundary_radius:
                             continue
                     target = Hex(t_q, t_r)
                     self.cached_reachable_hexes.add(target)

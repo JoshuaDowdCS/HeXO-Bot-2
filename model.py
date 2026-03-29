@@ -49,3 +49,50 @@ class HeXONet(nn.Module):
         val = torch.tanh(self.val_fc2(val))
         
         return pol, val
+
+
+def build_hex_grid(radius):
+    """Build ordered list of (q,r) cells in a hex grid of given radius.
+    This ordering MUST be consistent between training and inference."""
+    cells = []
+    for q in range(-radius, radius + 1):
+        for r in range(max(-radius, -q - radius), min(radius, -q + radius) + 1):
+            cells.append((q, r))
+    return cells
+
+
+class HeXOMlpNet(nn.Module):
+    def __init__(self, input_radius=15, num_global_features=6):
+        super(HeXOMlpNet, self).__init__()
+        self.radius = input_radius
+        self.num_cells = 3 * input_radius**2 + 3 * input_radius + 1
+        input_size = self.num_cells * 3 + num_global_features
+
+        # Shared trunk
+        self.fc1 = nn.Linear(input_size, 512)
+        self.bn1 = nn.BatchNorm1d(512)
+        self.fc2 = nn.Linear(512, 256)
+        self.bn2 = nn.BatchNorm1d(256)
+        self.fc3 = nn.Linear(256, 128)
+        self.bn3 = nn.BatchNorm1d(128)
+
+        # Policy head
+        self.pol_fc1 = nn.Linear(128, 128)
+        self.pol_fc2 = nn.Linear(128, self.num_cells)
+
+        # Value head
+        self.val_fc1 = nn.Linear(128, 64)
+        self.val_fc2 = nn.Linear(64, 1)
+
+    def forward(self, x):
+        x = F.relu(self.bn1(self.fc1(x)))
+        x = F.relu(self.bn2(self.fc2(x)))
+        x = F.relu(self.bn3(self.fc3(x)))
+
+        pol = F.relu(self.pol_fc1(x))
+        pol = self.pol_fc2(pol)
+
+        val = F.relu(self.val_fc1(x))
+        val = torch.tanh(self.val_fc2(val))
+
+        return pol, val
