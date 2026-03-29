@@ -5,7 +5,6 @@ import random
 import time
 from hexo_engine import HeXOEngine, Hex
 from best_ai import HeXOBestAI
-from train import BOARD_SIZE
 
 # UI Constants
 SCREEN_WIDTH = 1200
